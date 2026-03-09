@@ -1,15 +1,18 @@
 import os
 import json
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # ============================================
 # Configuration (pulled from GitHub Secrets)
 # ============================================
 LINEAR_API_KEY = os.environ["LINEAR_API_KEY"]
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
-SLACK_USER_ID = os.environ["SLACK_USER_ID"]  # Your Slack user ID
-GOOGLE_CALENDAR_API_KEY = os.environ.get("GOOGLE_CALENDAR_API_KEY", "")
+SLACK_USER_ID = os.environ["SLACK_USER_ID"]
+GOOGLE_CALENDAR_CREDENTIALS = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS", "")
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
 
 # ============================================
@@ -103,45 +106,52 @@ def fetch_linear_issues():
 # ============================================
 def fetch_calendar_events():
     """Fetch today's calendar events from Google Calendar."""
-    if not GOOGLE_CALENDAR_API_KEY:
-        return None  # Skip if not configured
-
-    now = datetime.now(timezone.utc)
-    start_of_day = now.replace(hour=0, minute=0, second=0).isoformat()
-    end_of_day = now.replace(hour=23, minute=59, second=59).isoformat()
-
-    response = requests.get(
-        f"https://www.googleapis.com/calendar/v3/calendars/{GOOGLE_CALENDAR_ID}/events",
-        params={
-            "key": GOOGLE_CALENDAR_API_KEY,
-            "timeMin": start_of_day,
-            "timeMax": end_of_day,
-            "singleEvents": True,
-            "orderBy": "startTime",
-            "maxResults": 15,
-        },
-        headers={"Authorization": f"Bearer {GOOGLE_CALENDAR_API_KEY}"},
-    )
-
-    if response.status_code != 200:
-        print(f"⚠️ Calendar API error: {response.status_code}")
+    if not GOOGLE_CALENDAR_CREDENTIALS:
         return None
 
-    events = []
-    for event in response.json().get("items", []):
-        start = event.get("start", {})
-        time_str = start.get("dateTime", start.get("date", ""))
-        if "T" in time_str:
-            time_display = datetime.fromisoformat(time_str).strftime("%-I:%M%p")
-        else:
-            time_display = "All day"
+    try:
+        creds_json = json.loads(GOOGLE_CALENDAR_CREDENTIALS)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_json,
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+        )
 
-        events.append({
-            "time": time_display,
-            "title": event.get("summary", "No title"),
-        })
+        service = build("calendar", "v3", credentials=credentials)
 
-    return events
+        # Get today's events in Central Time
+        now = datetime.now(timezone(timedelta(hours=-5)))  # CDT (adjust to -6 for CST)
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+
+        result = service.events().list(
+            calendarId=GOOGLE_CALENDAR_ID,
+            timeMin=start_of_day,
+            timeMax=end_of_day,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=15,
+        ).execute()
+
+        events = []
+        for event in result.get("items", []):
+            start = event.get("start", {})
+            time_str = start.get("dateTime", start.get("date", ""))
+            if "T" in time_str:
+                time_display = datetime.fromisoformat(time_str).strftime("%-I:%M%p")
+            else:
+                time_display = "All day"
+
+            events.append({
+                "time": time_display,
+                "title": event.get("summary", "No title"),
+            })
+
+        print(f"   Found {len(events)} events today")
+        return events
+
+    except Exception as e:
+        print(f"   ⚠️ Calendar error: {e}")
+        return None
 
 
 # ============================================
