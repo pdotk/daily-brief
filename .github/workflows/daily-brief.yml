@@ -1,12 +1,9 @@
 name: Daily Brief
 
 on:
-  # Runs every weekday at 2:00 PM UTC (9:00 AM ET / 6:00 AM PT)
-  # Adjust the cron time to match YOUR morning!
   schedule:
     - cron: '0 13 * * 1-5'
 
-  # Allows you to manually trigger it anytime for testing
   workflow_dispatch:
 
 jobs:
@@ -22,10 +19,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests google-auth google-api-python-client
 
       - name: Run daily brief
-env:
+        env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
