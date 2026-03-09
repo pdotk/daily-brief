@@ -49,7 +49,7 @@ def fetch_linear_issues():
         }
     }
     """
-    
+
     response = requests.post(
         "https://api.linear.app/graphql",
         headers={
@@ -58,13 +58,27 @@ def fetch_linear_issues():
         },
         json={"query": query},
     )
-    response.raise_for_status()
+
+    print(f"   Linear API status code: {response.status_code}")
+    
     data = response.json()
+
+    # Check for errors
+    if "errors" in data:
+        print(f"   ❌ Linear API errors: {data['errors']}")
+        return [], []
+
+    teams = data.get("data", {}).get("teams", {}).get("nodes", [])
+    print(f"   Teams found: {len(teams)}")
+    
+    for team in teams:
+        issues = team.get("issues", {}).get("nodes", [])
+        print(f"   Team '{team.get('name')}': {len(issues)} issues")
 
     in_progress = []
     todo = []
 
-    for team in data.get("data", {}).get("teams", {}).get("nodes", []):
+    for team in teams:
         for issue in team.get("issues", {}).get("nodes", []):
             item = {
                 "id": issue["identifier"],
@@ -79,7 +93,6 @@ def fetch_linear_issues():
             elif issue["state"]["type"] == "unstarted":
                 todo.append(item)
 
-    # Sort by priority (1 = urgent, 2 = high, 3 = medium, 4 = low, 0 = none)
     in_progress.sort(key=lambda x: x["priority"] if x["priority"] > 0 else 99)
     todo.sort(key=lambda x: x["priority"] if x["priority"] > 0 else 99)
 
