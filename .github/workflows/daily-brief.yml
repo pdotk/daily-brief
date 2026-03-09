@@ -4,7 +4,7 @@ on:
   # Runs every weekday at 2:00 PM UTC (9:00 AM ET / 6:00 AM PT)
   # Adjust the cron time to match YOUR morning!
   schedule:
-    - cron: '0 14 * * 1-5'
+    - cron: '0 13 * * 1-5'
 
   # Allows you to manually trigger it anytime for testing
   workflow_dispatch:
