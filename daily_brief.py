@@ -13,17 +13,21 @@ from googleapiclient.discovery import build
 LINEAR_API_KEY = os.environ["LINEAR_API_KEY"]
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
+SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN", "")
 GOOGLE_CALENDAR_CREDENTIALS = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS", "")
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
 
-# ─── Talent channel IDs to summarize ───
+# Talent channel IDs to summarize
 TALENT_CHANNELS = {
     "C072E3BBSVC": "#talent-recruiting-and-operations",
     "C0A4MSN40RF": "#referrals-talent",
     "CUYUC6CGJ": "#talent",
 }
 
-# ─── NEW: User name cache (populated lazily) ───
+# React-based save emoji (without colons)
+SAVE_EMOJI = "bookmark"  # 🔖
+
+# User name cache (populated lazily)
 _user_cache = {}
 
 
@@ -197,7 +201,7 @@ def fetch_slack_highlights():
 
 
 # ============================================
-# 3b. Slack User Resolution  ← NEW
+# 3b. Slack User Resolution & Text Cleanup
 # ============================================
 def resolve_slack_user(user_id):
     """Look up a Slack user ID and return their display name. Results are cached."""
@@ -219,7 +223,6 @@ def resolve_slack_user(user_id):
 
         if data.get("ok"):
             profile = data["user"].get("profile", {})
-            # Prefer display_name, fall back to real_name, then user_id
             name = (
                 profile.get("display_name")
                 or profile.get("real_name")
@@ -229,7 +232,7 @@ def resolve_slack_user(user_id):
             _user_cache[user_id] = name
             return name
         else:
-            _user_cache[user_id] = user_id  # Cache the miss too
+            _user_cache[user_id] = user_id
             return user_id
 
     except Exception:
@@ -239,12 +242,13 @@ def resolve_slack_user(user_id):
 
 def humanize_slack_text(text):
     """Replace <@U12345> user mentions with display names, and clean up Slack markup."""
-    # Replace user mentions: <@U12345> → "Display Name"
+
     def replace_user_mention(match):
         user_id = match.group(1)
         name = resolve_slack_user(user_id)
         return f"*{name}*"
 
+    # Replace user mentions: <@U12345> → *Display Name*
     text = re.sub(r"<@(U[A-Z0-9]+)>", replace_user_mention, text)
 
     # Replace channel mentions: <#C12345|channel-name> → #channel-name
@@ -295,7 +299,6 @@ def fetch_talent_channel_summaries():
 
             messages = data.get("messages", [])
 
-            # Filter out bot join/leave messages, keep substantive ones
             real_messages = [
                 m
                 for m in messages
@@ -303,15 +306,10 @@ def fetch_talent_channel_summaries():
                 not in ("channel_join", "channel_leave", "bot_add", "bot_remove")
             ]
 
-            # Pull first ~120 chars of each message as a preview
             highlights = []
-            for msg in real_messages[:5]:  # Top 5 most recent
+            for msg in real_messages[:5]:
                 text = msg.get("text", "")
-
-                # ─── NEW: Resolve user IDs to names ───
                 text = humanize_slack_text(text)
-                # ──────────────────────────────────────
-
                 preview = (text[:120] + "…") if len(text) > 120 else text
                 highlights.append(preview)
 
@@ -331,13 +329,87 @@ def fetch_talent_channel_summaries():
 
 
 # ============================================
+# 3d. Fetch React-Based Saved Items
+# ============================================
+def fetch_saved_reactions():
+    """Fetch messages the user reacted to with the save emoji in the past 24h."""
+    if not SLACK_USER_TOKEN:
+        print("   ⚠️ SLACK_USER_TOKEN not configured — skipping saved items")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {SLACK_USER_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.get(
+            "https://slack.com/api/reactions.list",
+            headers=headers,
+            params={"limit": 50},
+        )
+
+        data = response.json()
+
+        if not data.get("ok"):
+            print(f"   ⚠️ Error fetching reactions: {data.get('error')}")
+            return None
+
+        items = data.get("items", [])
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).timestamp()
+
+        saved = []
+        for item in items:
+            if item.get("type") != "message":
+                continue
+
+            msg = item.get("message", {})
+
+            has_save = False
+            for reaction in msg.get("reactions", []):
+                if reaction["name"] == SAVE_EMOJI:
+                    has_save = True
+                    break
+
+            if not has_save:
+                continue
+
+            ts = float(msg.get("ts", 0))
+            if ts < cutoff:
+                continue
+
+            text = msg.get("text", "")
+            text = humanize_slack_text(text)
+            preview = (text[:120] + "…") if len(text) > 120 else text
+
+            channel_id = item.get("channel")
+            channel_label = f"<#{channel_id}>" if channel_id else ""
+
+            user_id = msg.get("user", "")
+            author = resolve_slack_user(user_id) if user_id else ""
+            author_label = f"*{author}*: " if author else ""
+
+            saved.append({
+                "preview": f"{author_label}{preview}",
+                "channel": channel_label,
+            })
+
+        print(f"   Found {len(saved)} 🔖 saved messages in last 24h")
+        return saved
+
+    except Exception as e:
+        print(f"   ⚠️ Exception fetching reactions: {e}")
+        return None
+
+
+# ============================================
 # 4. Format & Send Slack Message
 # ============================================
 def priority_emoji(priority):
     return {1: "🔴", 2: "🟠", 3: "🟡", 4: "⚪"}.get(priority, "⚪")
 
 
-def build_message(in_progress, todo, calendar_events, slack_highlights, channel_summaries):
+def build_message(in_progress, todo, calendar_events, slack_highlights, channel_summaries, saved_items):
     today = datetime.now().strftime("%A, %B %-d")
 
     blocks = [
@@ -388,15 +460,33 @@ def build_message(in_progress, todo, calendar_events, slack_highlights, channel_
             }
         )
 
-    # --- Slack ---
+    # --- Slack DMs ---
     if slack_highlights:
         text = "*💬 Slack*\n"
         text += f"  • {slack_highlights['unread_dms']} unread DM conversations\n"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
+    # --- 🔖 Saved for Later ---
+    if saved_items:
+        text = "*🔖 Saved for Later (last 24h)*\n"
+        for item in saved_items:
+            channel_ctx = f"  {item['channel']}" if item["channel"] else ""
+            text += f"  • {item['preview']}{channel_ctx}\n"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+    elif saved_items is not None:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*🔖 Saved for Later*\n  _No saved items in last 24h_ ✨",
+                },
+            }
+        )
+
     blocks.append({"type": "divider"})
 
-    # ─── Talent Channel Summaries ────────────────────────
+    # --- Talent Channel Summaries ---
     if channel_summaries:
         text = "*📢 Talent Channel Activity (last 24h)*\n"
         for channel_name, info in channel_summaries.items():
@@ -412,7 +502,6 @@ def build_message(in_progress, todo, calendar_events, slack_highlights, channel_
 
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
         blocks.append({"type": "divider"})
-    # ─────────────────────────────────────────────────────
 
     # --- Footer ---
     blocks.append(
@@ -481,11 +570,14 @@ if __name__ == "__main__":
     print("💬 Fetching Slack highlights...")
     slack_highlights = fetch_slack_highlights()
 
+    print("🔖 Fetching saved reactions...")
+    saved_items = fetch_saved_reactions()
+
     print("📢 Fetching talent channel summaries...")
     channel_summaries = fetch_talent_channel_summaries()
 
     print("📨 Building and sending daily brief...")
     blocks = build_message(
-        in_progress, todo, calendar_events, slack_highlights, channel_summaries
+        in_progress, todo, calendar_events, slack_highlights, channel_summaries, saved_items
     )
     send_slack_dm(blocks)
