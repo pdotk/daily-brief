@@ -2,7 +2,7 @@ name: Daily Brief
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5'  # 8am CDT, Mon-Fri
+    - cron: '0 13 * * 1-5'
 
   workflow_dispatch:
 
@@ -30,10 +30,3 @@ jobs:
           GOOGLE_CALENDAR_CREDENTIALS: ${{ secrets.GOOGLE_CALENDAR_CREDENTIALS }}
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
         run: python daily_brief.py
-
-      - name: Keep workflow alive
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit --allow-empty -m "Keep workflow alive [skip ci]"
-          git push
