@@ -11,7 +11,7 @@ from googleapiclient.discovery import build
 # Configuration (pulled from GitHub Secrets)
 # ============================================
 LINEAR_API_KEY = os.environ["LINEAR_API_KEY"]
-LINEAR_TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "PMK")
+LINEAR_TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "")
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN", "")
