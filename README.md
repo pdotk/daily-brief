@@ -162,7 +162,7 @@ Go to your repo → **Settings** → **Secrets and variables** → **Actions** �
 | `SLACK_CHANNELS` | JSON object of channel IDs and names (see below) | Optional |
 | `SAVE_EMOJI` | Emoji name without colons (e.g., `bookmark`) | Optional (defaults to `bookmark`) |
 | `LINEAR_API_KEY` | `lin_api_...` | ✅ Yes |
-| `LINEAR_TEAM_KEY` | Your Linear team key (e.g., `ENG`) | Optional (defaults to `PMK`) |
+| `LINEAR_TEAM_KEY` | Your Linear team key (e.g., `ENG`) | Optional (defaults to ``) |
 | `GOOGLE_CALENDAR_CREDENTIALS` | Entire JSON key file contents | Optional |
 | `GOOGLE_CALENDAR_ID` | Your calendar ID (e.g., `you@gmail.com`) | Optional |
 
