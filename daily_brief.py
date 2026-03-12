@@ -175,7 +175,7 @@ def fetch_calendar_events():
 # 3. Fetch Slack Highlights
 # ============================================
 def fetch_slack_highlights():
-    """Fetch unread Slack DM count."""
+    """Fetch unread Slack DM conversations with sender names."""
     token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
     headers = {
         "Authorization": f"Bearer {token}",
@@ -183,20 +183,38 @@ def fetch_slack_highlights():
     }
 
     try:
-        response = requests.get(
-            "https://slack.com/api/conversations.list",
-            headers=headers,
-            params={"types": "im", "limit": 50},
-        )
+        # Paginate through all DM conversations
+        all_channels = []
+        cursor = None
 
-        data = response.json()
-        if not data.get("ok"):
-            print(f"   ⚠️ Error listing DMs: {data.get('error')}")
-            return {"unread_dms": 0}
+        while True:
+            params = {"types": "im", "limit": 200}
+            if cursor:
+                params["cursor"] = cursor
 
-        unread_dms = 0
-        for channel in data.get("channels", []):
+            response = requests.get(
+                "https://slack.com/api/conversations.list",
+                headers=headers,
+                params=params,
+            )
+
+            data = response.json()
+            if not data.get("ok"):
+                print(f"   ⚠️ Error listing DMs: {data.get('error')}")
+                return {"unread_dms": 0, "unread_from": []}
+
+            all_channels.extend(data.get("channels", []))
+
+            cursor = data.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        print(f"   Checking {len(all_channels)} DM conversations...")
+
+        unread_from = []
+        for channel in all_channels:
             channel_id = channel.get("id")
+            dm_user_id = channel.get("user")
 
             # Get the latest message in this DM
             history = requests.get(
@@ -213,9 +231,15 @@ def fetch_slack_highlights():
             if not messages:
                 continue
 
-            latest_ts = float(messages[0].get("ts", 0))
+            latest_msg = messages[0]
+            latest_ts = float(latest_msg.get("ts", 0))
+            sender_id = latest_msg.get("user", "")
 
-            # Get the last_read marker for this conversation
+            # Skip if the last message is from you — that's not "unread"
+            if sender_id == SLACK_USER_ID:
+                continue
+
+            # Get the last_read marker
             info = requests.get(
                 "https://slack.com/api/conversations.info",
                 headers=headers,
@@ -229,14 +253,18 @@ def fetch_slack_highlights():
             last_read = float(info_data.get("channel", {}).get("last_read", 0))
 
             if latest_ts > last_read:
-                unread_dms += 1
+                name = resolve_slack_user(dm_user_id) if dm_user_id else "Unknown"
+                text = latest_msg.get("text", "")
+                text = humanize_slack_text(text)
+                preview = (text[:80] + "…") if len(text) > 80 else text
+                unread_from.append({"name": name, "preview": preview})
 
-        print(f"   Found {unread_dms} unread DM conversations")
-        return {"unread_dms": unread_dms}
+        print(f"   Found {len(unread_from)} unread DM conversations")
+        return {"unread_dms": len(unread_from), "unread_from": unread_from}
 
     except Exception as e:
         print(f"   ⚠️ Exception fetching DMs: {e}")
-        return {"unread_dms": 0}
+        return {"unread_dms": 0, "unread_from": []}
 # ============================================
 # 3b. Slack User Resolution & Text Cleanup
 # ============================================
@@ -494,8 +522,13 @@ def build_message(in_progress, todo, calendar_events, slack_highlights, channel_
 
     # --- Slack DMs ---
     if slack_highlights:
-        text = "*💬 Slack*\n"
-        text += f"  • {slack_highlights['unread_dms']} unread DM conversations\n"
+        unread = slack_highlights.get("unread_from", [])
+        if unread:
+            text = f"*💬 Slack — {len(unread)} unread DM{'s' if len(unread) != 1 else ''}*\n"
+            for dm in unread:
+                text += f"  • *{dm['name']}*: {dm['preview']}\n"
+        else:
+            text = "*💬 Slack*\n  _No unread DMs_ ✨\n"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
     # --- Saved for Later ---
