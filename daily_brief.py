@@ -176,8 +176,9 @@ def fetch_calendar_events():
 # ============================================
 def fetch_slack_highlights():
     """Fetch recent Slack mentions and DMs."""
+    token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
     headers = {
-        "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
@@ -195,7 +196,6 @@ def fetch_slack_highlights():
                 unread_dms += 1
 
     return {"unread_dms": unread_dms}
-
 
 # ============================================
 # 3b. Slack User Resolution & Text Cleanup
