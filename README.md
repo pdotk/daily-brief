@@ -13,11 +13,11 @@ Every weekday morning, a Slack DM like this:
 ☀️ Daily Brief — Monday, March 10
 ────────────────────────────
 🔥 In Progress
-  🔴 ABC-123: Update hiring dashboard
-  🟠 ABC-456: Review candidate pipeline
+  🔴 PMK-123: Update hiring dashboard
+  🟠 PMK-456: Review candidate pipeline
 
 📋 Up Next (Todo)
-  🟡 ABC-789: Prepare weekly sync notes
+  🟡 PMK-789: Prepare weekly sync notes
 
 ────────────────────────────
 📅 Today's Calendar
@@ -25,11 +25,8 @@ Every weekday morning, a Slack DM like this:
   • 11:30AM — 1:1 with manager
   • 2:00PM — Interview: Senior Engineer
 
-💬 Slack
-  • 3 unread DM conversations
-
 🔖 Saved for Later (last 24h)
-  • Jane Smith: New referral process doc…  #talent
+  • Gaby Garcia: New referral process doc…  #talent
 
 ────────────────────────────
 📢 Channel Activity (last 24h)
@@ -52,7 +49,6 @@ Every weekday morning, a Slack DM like this:
 |---|---|
 | 📋 **Linear issues** | In Progress and Todo items from your team |
 | 📅 **Google Calendar** | Today's meetings and events |
-| 💬 **Slack DMs** | Unread conversation count |
 | 🔖 **Saved items** | Messages you reacted to with a chosen emoji (last 24h) |
 | 📢 **Channel summaries** | Recent messages from channels you care about |
 | 👤 **Name resolution** | Slack user IDs automatically replaced with display names |
@@ -93,8 +89,6 @@ Every weekday morning, a Slack DM like this:
 | Scope | Purpose |
 |---|---|
 | `chat:write` | Send DMs to you |
-| `im:history` | Read DM unread counts |
-| `im:read` | List DM conversations |
 | `channels:history` | Read public channel messages |
 | `groups:history` | Read private channel messages |
 | `users:read` | Resolve user IDs to display names |
@@ -162,7 +156,7 @@ Go to your repo → **Settings** → **Secrets and variables** → **Actions** �
 | `SLACK_CHANNELS` | JSON object of channel IDs and names (see below) | Optional |
 | `SAVE_EMOJI` | Emoji name without colons (e.g., `bookmark`) | Optional (defaults to `bookmark`) |
 | `LINEAR_API_KEY` | `lin_api_...` | ✅ Yes |
-| `LINEAR_TEAM_KEY` | Your Linear team key (e.g., `ENG`) | Optional (defaults to ``) |
+| `LINEAR_TEAM_KEY` | Your Linear team key (e.g., `ENG`) | ✅ Yes |
 | `GOOGLE_CALENDAR_CREDENTIALS` | Entire JSON key file contents | Optional |
 | `GOOGLE_CALENDAR_ID` | Your calendar ID (e.g., `you@gmail.com`) | Optional |
 
@@ -240,7 +234,7 @@ GitHub Actions (cron: weekday mornings)
   │
   ├── Linear GraphQL API → fetch team issues
   ├── Google Calendar API → fetch today's events
-  ├── Slack API (bot token) → fetch DMs, channel history, user profiles
+  ├── Slack API (bot token) → fetch channel history, user profiles
   ├── Slack API (user token) → fetch emoji reactions
   │
   └── Slack API → send formatted DM to you
