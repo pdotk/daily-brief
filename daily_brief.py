@@ -175,6 +175,8 @@ def fetch_calendar_events():
 # 3. Fetch Slack Highlights
 # ============================================
 def fetch_slack_highlights():
+    """Placeholder — Slack unread DM tracking not currently reliable via API."""
+    return None
     """Fetch unread Slack DM conversations with sender names."""
     token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
     headers = {
@@ -521,15 +523,7 @@ def build_message(in_progress, todo, calendar_events, slack_highlights, channel_
         )
 
     # --- Slack DMs ---
-    if slack_highlights:
-        unread = slack_highlights.get("unread_from", [])
-        if unread:
-            text = f"*💬 Slack — {len(unread)} unread DM{'s' if len(unread) != 1 else ''}*\n"
-            for dm in unread:
-                text += f"  • *{dm['name']}*: {dm['preview']}\n"
-        else:
-            text = "*💬 Slack*\n  _No unread DMs_ ✨\n"
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+    # (Removed — Slack API doesn't reliably track read state)
 
     # --- Saved for Later ---
     if saved_items:
