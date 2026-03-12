@@ -183,11 +183,10 @@ def fetch_slack_highlights():
     }
 
     try:
-        # Get list of DM conversations
         response = requests.get(
             "https://slack.com/api/conversations.list",
             headers=headers,
-            params={"types": "im,mpim", "limit": 50},
+            params={"types": "im", "limit": 50},
         )
 
         data = response.json()
@@ -199,18 +198,38 @@ def fetch_slack_highlights():
         for channel in data.get("channels", []):
             channel_id = channel.get("id")
 
-            # Check each conversation individually for unread count
-            info_response = requests.get(
+            # Get the latest message in this DM
+            history = requests.get(
+                "https://slack.com/api/conversations.history",
+                headers=headers,
+                params={"channel": channel_id, "limit": 1},
+            )
+
+            hist_data = history.json()
+            if not hist_data.get("ok"):
+                continue
+
+            messages = hist_data.get("messages", [])
+            if not messages:
+                continue
+
+            latest_ts = float(messages[0].get("ts", 0))
+
+            # Get the last_read marker for this conversation
+            info = requests.get(
                 "https://slack.com/api/conversations.info",
                 headers=headers,
                 params={"channel": channel_id},
             )
 
-            info_data = info_response.json()
-            if info_data.get("ok"):
-                ch = info_data.get("channel", {})
-                if ch.get("unread_count_display", 0) > 0:
-                    unread_dms += 1
+            info_data = info.json()
+            if not info_data.get("ok"):
+                continue
+
+            last_read = float(info_data.get("channel", {}).get("last_read", 0))
+
+            if latest_ts > last_read:
+                unread_dms += 1
 
         print(f"   Found {unread_dms} unread DM conversations")
         return {"unread_dms": unread_dms}
