@@ -175,28 +175,49 @@ def fetch_calendar_events():
 # 3. Fetch Slack Highlights
 # ============================================
 def fetch_slack_highlights():
-    """Fetch recent Slack mentions and DMs."""
+    """Fetch unread Slack DM count."""
     token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
-    response = requests.get(
-        "https://slack.com/api/conversations.list",
-        headers=headers,
-        params={"types": "im,mpim", "limit": 20},
-    )
+    try:
+        # Get list of DM conversations
+        response = requests.get(
+            "https://slack.com/api/conversations.list",
+            headers=headers,
+            params={"types": "im,mpim", "limit": 50},
+        )
 
-    unread_dms = 0
-    if response.status_code == 200:
         data = response.json()
+        if not data.get("ok"):
+            print(f"   ⚠️ Error listing DMs: {data.get('error')}")
+            return {"unread_dms": 0}
+
+        unread_dms = 0
         for channel in data.get("channels", []):
-            if channel.get("is_im") and channel.get("unread_count_display", 0) > 0:
-                unread_dms += 1
+            channel_id = channel.get("id")
 
-    return {"unread_dms": unread_dms}
+            # Check each conversation individually for unread count
+            info_response = requests.get(
+                "https://slack.com/api/conversations.info",
+                headers=headers,
+                params={"channel": channel_id},
+            )
 
+            info_data = info_response.json()
+            if info_data.get("ok"):
+                ch = info_data.get("channel", {})
+                if ch.get("unread_count_display", 0) > 0:
+                    unread_dms += 1
+
+        print(f"   Found {unread_dms} unread DM conversations")
+        return {"unread_dms": unread_dms}
+
+    except Exception as e:
+        print(f"   ⚠️ Exception fetching DMs: {e}")
+        return {"unread_dms": 0}
 # ============================================
 # 3b. Slack User Resolution & Text Cleanup
 # ============================================
