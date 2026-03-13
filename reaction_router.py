@@ -1,26 +1,22 @@
 import os
 import re
-import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
-if __name__ == "__main__":
-    print("🔄 Starting up...")
-    print(f"🎯 Reaction router listening for :{ROUTE_EMOJI}: reactions...")
-    SocketModeHandler(app, SLACK_APP_TOKEN).start()
 
 # ============================================
 # Configuration (pulled from GitHub Secrets)
 # ============================================
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
-SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]       # New: needs xapp- token
+SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
-ROUTE_EMOJI = os.environ.get("ROUTE_EMOJI", "bookmark") # emoji that triggers routing
-TARGET_CHANNEL_ID = os.environ["REACTION_TARGET_CHANNEL_ID"] # where to copy messages
+ROUTE_EMOJI = os.environ.get("ROUTE_EMOJI", "bookmark")
+TARGET_CHANNEL_ID = os.environ["REACTION_TARGET_CHANNEL_ID"]
 
 app = App(token=SLACK_BOT_TOKEN)
 
-# ── Reuse helpers from daily_brief ──────────────────────────────────────────
+# ============================================
+# Helpers
+# ============================================
 _user_cache = {}
 
 def resolve_slack_user(user_id):
@@ -43,6 +39,7 @@ def resolve_slack_user(user_id):
     _user_cache[user_id] = user_id
     return user_id
 
+
 def humanize_slack_text(text):
     def replace_mention(match):
         return f"*{resolve_slack_user(match.group(1))}*"
@@ -52,14 +49,17 @@ def humanize_slack_text(text):
     text = re.sub(r"<(https?://[^>]+)>", r"\1", text)
     return text
 
-# ── Reaction handler ─────────────────────────────────────────────────────────
+
+# ============================================
+# Reaction Handler
+# ============================================
 @app.event("reaction_added")
 def handle_reaction(event, client):
-    # Only you
+    # Only trigger for your user ID
     if event["user"] != SLACK_USER_ID:
         return
 
-    # Only your chosen emoji
+    # Only trigger for your chosen emoji
     if event["reaction"] != ROUTE_EMOJI:
         return
 
@@ -114,7 +114,10 @@ def handle_reaction(event, client):
         print(f"❌ Error routing message: {e}")
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ============================================
+# Entry Point
+# ============================================
 if __name__ == "__main__":
+    print("🔄 Starting up...")
     print(f"🎯 Reaction router listening for :{ROUTE_EMOJI}: reactions...")
     SocketModeHandler(app, SLACK_APP_TOKEN).start()
