@@ -1,0 +1,31 @@
+name: Reaction Router
+
+on:
+  workflow_dispatch:      # start manually
+  push:
+    branches: [main]
+    paths:
+      - 'reaction_router.py'  # auto-restart on changes
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # just under GitHub's 6hr limit
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Start reaction router
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+          SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
+          ROUTE_EMOJI: ${{ secrets.ROUTE_EMOJI }}
+          REACTION_TARGET_CHANNEL_ID: ${{ secrets.REACTION_TARGET_CHANNEL_ID }}
+        run: python reaction_router.py
