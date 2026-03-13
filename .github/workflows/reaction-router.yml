@@ -28,4 +28,4 @@ jobs:
           SLACK_USER_ID: ${{ secrets.SLACK_USER_ID }}
           ROUTE_EMOJI: ${{ secrets.ROUTE_EMOJI }}
           REACTION_TARGET_CHANNEL_ID: ${{ secrets.REACTION_TARGET_CHANNEL_ID }}
-        run: python reaction_router.py
+        run: python -u reaction_router.py
