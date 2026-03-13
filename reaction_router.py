@@ -2,17 +2,21 @@ import os
 import re
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk import WebClient
 
 # ============================================
 # Configuration (pulled from GitHub Secrets)
 # ============================================
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_APP_TOKEN = os.environ["SLACK_APP_TOKEN"]
+SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN", "")
 SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 ROUTE_EMOJI = os.environ.get("ROUTE_EMOJI", "bookmark")
 TARGET_CHANNEL_ID = os.environ["REACTION_TARGET_CHANNEL_ID"]
 
 app = App(token=SLACK_BOT_TOKEN)
+user_client = WebClient(token=SLACK_USER_TOKEN) if SLACK_USER_TOKEN else None
+
 
 # ============================================
 # Helpers
@@ -71,9 +75,17 @@ def handle_reaction(event, client):
         print("⚠️ Missing channel or ts in reaction event")
         return
 
+    # Use user token for DMs (channel IDs starting with D), bot token for everything else
+    is_dm = channel_id.startswith("D")
+    fetch_client = user_client if is_dm and user_client else client
+
+    if is_dm and not user_client:
+        print("⚠️ SLACK_USER_TOKEN not configured — cannot fetch DM messages")
+        return
+
     # Fetch the original message
     try:
-        result = client.conversations_history(
+        result = fetch_client.conversations_history(
             channel=channel_id,
             latest=message_ts,
             inclusive=True,
