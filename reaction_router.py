@@ -4,6 +4,11 @@ import requests
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+if __name__ == "__main__":
+    print("🔄 Starting up...")
+    print(f"🎯 Reaction router listening for :{ROUTE_EMOJI}: reactions...")
+    SocketModeHandler(app, SLACK_APP_TOKEN).start()
+
 # ============================================
 # Configuration (pulled from GitHub Secrets)
 # ============================================
