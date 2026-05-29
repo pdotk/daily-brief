@@ -540,7 +540,7 @@ def fetch_linear_recap_activity(days=14):
         return []
 
     query = """
-    query($userId: String!, $since: DateTime!) {
+    query($userId: ID!, $since: DateTime!) {
         issues(
             filter: {
                 updatedAt: { gte: $since }
