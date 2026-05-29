@@ -735,7 +735,7 @@ def fetch_slack_recap_activity(days=14):
         print("   No SLACK_CHANNELS configured — skipping Slack recap activity")
         return []
 
-    token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
+    token = SLACK_BOT_TOKEN
 
     headers = {
         "Authorization": f"Bearer {token}",
