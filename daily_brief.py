@@ -611,7 +611,7 @@ def fetch_linear_recap_activity(days=14):
         if issue.get("completedAt"):
             text_parts.append(f"Completed: {issue['completedAt']}")
 
-people = []
+        people = []
 
         assignee = issue.get("assignee") or {}
         creator = issue.get("creator") or {}
