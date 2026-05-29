@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import argparse
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -17,6 +18,8 @@ SLACK_USER_ID = os.environ["SLACK_USER_ID"]
 SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN", "")
 GOOGLE_CALENDAR_CREDENTIALS = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS", "")
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+RECAP_MODEL = os.environ.get("RECAP_MODEL", "gpt-4o-mini")
 
 # Channel config from environment (JSON string: {"CHANNEL_ID": "#channel-name", ...})
 SLACK_CHANNELS = json.loads(os.environ.get("SLACK_CHANNELS", "{}"))
@@ -463,6 +466,528 @@ def fetch_saved_reactions():
         print(f"   ⚠️ Exception fetching reactions: {e}")
         return None
 
+# ============================================
+# 3e. Work Recap Helpers
+# ============================================
+
+def activity_item(source, type_, title, text="", url="", created_at="", people=None, metadata=None):
+    """Normalize all recap activity into one common shape."""
+    return {
+        "source": source,
+        "type": type_,
+        "title": title or "",
+        "text": text or "",
+        "url": url or "",
+        "created_at": created_at or "",
+        "people": people or [],
+        "metadata": metadata or {},
+    }
+
+
+def linear_graphql(query, variables=None):
+    """Run a Linear GraphQL query."""
+    response = requests.post(
+        "https://api.linear.app/graphql",
+        headers={
+            "Authorization": LINEAR_API_KEY,
+            "Content-Type": "application/json",
+        },
+        json={
+            "query": query,
+            "variables": variables or {},
+        },
+    )
+
+    data = response.json()
+
+    if "errors" in data:
+        print(f"   ❌ Linear API errors: {data['errors']}")
+        return None
+
+    return data.get("data", {})
+
+
+def fetch_linear_viewer_id():
+    """Return the current Linear user's ID."""
+    query = """
+    query {
+        viewer {
+            id
+            name
+            email
+        }
+    }
+    """
+
+    data = linear_graphql(query)
+    if not data:
+        return None
+
+    viewer = data.get("viewer")
+    if not viewer:
+        return None
+
+    return viewer.get("id")
+
+
+def fetch_linear_recap_activity(days=14):
+    """Fetch Linear issues assigned to or created by you that changed recently."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    user_id = fetch_linear_viewer_id()
+    if not user_id:
+        print("   ⚠️ Could not determine Linear viewer")
+        return []
+
+    query = """
+    query($userId: String!, $since: DateTime!) {
+        issues(
+            filter: {
+                updatedAt: { gte: $since }
+                or: [
+                    { assignee: { id: { eq: $userId } } }
+                    { creator: { id: { eq: $userId } } }
+                ]
+            }
+            orderBy: updatedAt
+            first: 100
+        ) {
+            nodes {
+                identifier
+                title
+                description
+                url
+                createdAt
+                updatedAt
+                completedAt
+                priority
+                state {
+                    name
+                    type
+                }
+                team {
+                    key
+                    name
+                }
+                assignee {
+                    name
+                    email
+                }
+                creator {
+                    name
+                    email
+                }
+            }
+        }
+    }
+    """
+
+    data = linear_graphql(
+        query,
+        {
+            "userId": user_id,
+            "since": since,
+        },
+    )
+
+    if not data:
+        return []
+
+    issues = data.get("issues", {}).get("nodes", [])
+    items = []
+
+    for issue in issues:
+        state = issue.get("state", {}) or {}
+        team = issue.get("team", {}) or {}
+
+        text_parts = []
+
+        if issue.get("description"):
+            text_parts.append(issue["description"][:700])
+
+        text_parts.append(f"State: {state.get('name', '')}")
+        text_parts.append(f"Team: {team.get('key', '')}")
+
+        if issue.get("completedAt"):
+            text_parts.append(f"Completed: {issue['completedAt']}")
+
+        people = []
+        if issue.get("assignee", {}).get("name"):
+            people.append(issue["assignee"]["name"])
+        if issue.get("creator", {}).get("name"):
+            people.append(issue["creator"]["name"])
+
+        items.append(
+            activity_item(
+                source="linear",
+                type_="issue",
+                title=f"{issue['identifier']}: {issue['title']}",
+                text="\n".join(text_parts),
+                url=issue.get("url", ""),
+                created_at=issue.get("updatedAt", ""),
+                people=people,
+                metadata={
+                    "identifier": issue.get("identifier", ""),
+                    "state": state.get("name", ""),
+                    "state_type": state.get("type", ""),
+                    "team": team.get("key", ""),
+                    "completed_at": issue.get("completedAt", ""),
+                },
+            )
+        )
+
+    print(f"   Found {len(items)} Linear recap issues")
+    return items
+
+
+def fetch_calendar_activity(days=14):
+    """Fetch calendar events from the past N days for recap."""
+    if not GOOGLE_CALENDAR_CREDENTIALS:
+        print("   Calendar not configured — skipping recap calendar activity")
+        return []
+
+    try:
+        creds_json = json.loads(GOOGLE_CALENDAR_CREDENTIALS)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_json,
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+        )
+
+        service = build("calendar", "v3", credentials=credentials)
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days)
+
+        result = (
+            service.events()
+            .list(
+                calendarId=GOOGLE_CALENDAR_ID,
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=250,
+            )
+            .execute()
+        )
+
+        ignore_keywords = [
+            "lunch",
+            "ooo",
+            "pto",
+            "focus",
+            "hold",
+            "blocked",
+            "school",
+        ]
+
+        items = []
+
+        for event in result.get("items", []):
+            title = event.get("summary", "No title")
+
+            if any(keyword in title.lower() for keyword in ignore_keywords):
+                continue
+
+            if event.get("status") == "cancelled":
+                continue
+
+            start_data = event.get("start", {})
+            start_time = start_data.get("dateTime", start_data.get("date", ""))
+
+            attendees = []
+            for attendee in event.get("attendees", []):
+                if attendee.get("responseStatus") == "declined":
+                    continue
+                email = attendee.get("email")
+                if email:
+                    attendees.append(email)
+
+            description = event.get("description", "")
+            description = re.sub(r"<[^>]+>", "", description)
+
+            items.append(
+                activity_item(
+                    source="calendar",
+                    type_="event",
+                    title=title,
+                    text=description[:500],
+                    url=event.get("htmlLink", ""),
+                    created_at=start_time,
+                    people=attendees[:10],
+                    metadata={
+                        "organizer": event.get("organizer", {}).get("email", ""),
+                    },
+                )
+            )
+
+        print(f"   Found {len(items)} calendar recap events")
+        return items
+
+    except Exception as e:
+        print(f"   ⚠️ Calendar recap error: {e}")
+        return []
+
+
+def fetch_slack_recap_activity(days=14):
+    """Fetch your messages from configured Slack channels over the past N days."""
+    if not SLACK_CHANNELS:
+        print("   No SLACK_CHANNELS configured — skipping Slack recap activity")
+        return []
+
+    token = SLACK_USER_TOKEN or SLACK_BOT_TOKEN
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    oldest = (datetime.now(timezone.utc) - timedelta(days=days)).timestamp()
+    items = []
+
+    for channel_id, channel_name in SLACK_CHANNELS.items():
+        try:
+            cursor = None
+
+            while True:
+                params = {
+                    "channel": channel_id,
+                    "oldest": str(oldest),
+                    "limit": 200,
+                }
+
+                if cursor:
+                    params["cursor"] = cursor
+
+                response = requests.get(
+                    "https://slack.com/api/conversations.history",
+                    headers=headers,
+                    params=params,
+                )
+
+                data = response.json()
+
+                if not data.get("ok"):
+                    print(f"   ⚠️ Slack recap error for {channel_name}: {data.get('error')}")
+                    break
+
+                for msg in data.get("messages", []):
+                    if msg.get("user") != SLACK_USER_ID:
+                        continue
+
+                    subtype = msg.get("subtype")
+                    if subtype in ("channel_join", "channel_leave", "bot_message"):
+                        continue
+
+                    text = humanize_slack_text(msg.get("text", ""))
+                    if not text.strip():
+                        continue
+
+                    ts = msg.get("ts", "")
+                    created_at = datetime.fromtimestamp(float(ts), timezone.utc).isoformat()
+
+                    permalink = ""
+                    try:
+                        link_response = requests.get(
+                            "https://slack.com/api/chat.getPermalink",
+                            headers=headers,
+                            params={
+                                "channel": channel_id,
+                                "message_ts": ts,
+                            },
+                        )
+                        link_data = link_response.json()
+                        if link_data.get("ok"):
+                            permalink = link_data.get("permalink", "")
+                    except Exception:
+                        pass
+
+                    items.append(
+                        activity_item(
+                            source="slack",
+                            type_="message",
+                            title=f"Slack message in {channel_name}",
+                            text=text[:1000],
+                            url=permalink,
+                            created_at=created_at,
+                            metadata={
+                                "channel": channel_name,
+                                "thread_ts": msg.get("thread_ts", ""),
+                            },
+                        )
+                    )
+
+                cursor = data.get("response_metadata", {}).get("next_cursor")
+                if not cursor:
+                    break
+
+        except Exception as e:
+            print(f"   ⚠️ Exception fetching Slack recap for {channel_name}: {e}")
+
+    print(f"   Found {len(items)} Slack recap messages")
+    return items
+
+
+def summarize_recap_with_openai(items, days=14):
+    """Summarize recap items using OpenAI, if configured."""
+    if not OPENAI_API_KEY:
+        print("   OPENAI_API_KEY not configured — skipping AI summary")
+        return None
+
+    compact_items = []
+
+    for item in items:
+        compact_items.append(
+            {
+                "source": item["source"],
+                "type": item["type"],
+                "title": item["title"],
+                "text": item["text"][:1200],
+                "url": item["url"],
+                "created_at": item["created_at"],
+                "metadata": item["metadata"],
+            }
+        )
+
+    prompt = f"""
+You are helping Pam prepare a concise work recap for the past {days} days.
+
+Summarize the activity into:
+
+1. Highlights
+2. Work by theme/project
+3. Decisions, outcomes, or progress
+4. Meetings/collaboration
+5. Follow-ups
+
+Rules:
+- Do not invent work that is not supported by the activity.
+- Merge duplicates across Slack, calendar, and Linear.
+- Prefer concrete verbs: coordinated, reviewed, resolved, drafted, shipped, followed up.
+- Keep it useful for a personal work log or check-in.
+- Include source links where helpful.
+- Be concise, but not vague.
+- Avoid including sensitive candidate details. Generalize names if needed.
+
+Activity:
+{json.dumps(compact_items, indent=2)}
+"""
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": RECAP_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You write concise, accurate work recaps from activity logs.",
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
+                "temperature": 0.2,
+            },
+            timeout=60,
+        )
+
+        data = response.json()
+
+        if response.status_code >= 400:
+            print(f"   ⚠️ OpenAI error: {response.status_code} {data}")
+            return None
+
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as e:
+        print(f"   ⚠️ OpenAI recap error: {e}")
+        return None
+
+
+def summarize_recap_fallback(items, days=14):
+    """Simple fallback recap if OpenAI is not configured."""
+    by_source = {}
+
+    for item in items:
+        by_source.setdefault(item["source"], []).append(item)
+
+    lines = [
+        f"*Work recap — last {days} days*",
+        "",
+        "*Activity collected:*",
+    ]
+
+    for source, source_items in by_source.items():
+        lines.append(f"• {source}: {len(source_items)} items")
+
+    lines.append("")
+    lines.append("*Recent highlights by source:*")
+
+    for source, source_items in by_source.items():
+        lines.append("")
+        lines.append(f"*{source.title()}*")
+
+        for item in source_items[:10]:
+            title = item["title"]
+            url = item.get("url")
+            if url:
+                lines.append(f"• <{url}|{title}>")
+            else:
+                lines.append(f"• {title}")
+
+    return "\n".join(lines)
+
+
+def build_recap_blocks(summary, days=14, item_count=0):
+    """Build Slack blocks for the recap DM."""
+    today = datetime.now().strftime("%A, %B %-d")
+
+    max_len = 2800
+    if len(summary) > max_len:
+        summary = summary[:max_len] + "\n\n_Trimmed because Slack has opinions._"
+
+    return [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"🧾 Work Recap — Last {days} Days",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"Generated {today} from {item_count} activity items.",
+                }
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": summary,
+            },
+        },
+        {"type": "divider"},
+        {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": "🤖 _Your work recap, powered by GitHub Actions_",
+                }
+            ],
+        },
+    ]
 
 # ============================================
 # 4. Format & Send Slack Message
@@ -614,11 +1139,11 @@ def send_slack_dm(blocks):
         print(f"❌ Slack error sending message: {data.get('error', 'unknown error')}")
         print(f"   Full response: {data}")
 
-
 # ============================================
 # Main
 # ============================================
-if __name__ == "__main__":
+
+def run_daily():
     print("📋 Fetching Linear issues...")
     in_progress, todo = fetch_linear_issues()
     print(f"   Found {len(in_progress)} in progress, {len(todo)} todo")
@@ -640,3 +1165,61 @@ if __name__ == "__main__":
         in_progress, todo, calendar_events, slack_highlights, channel_summaries, saved_items
     )
     send_slack_dm(blocks)
+
+
+def run_recap(days=14):
+    print(f"🧾 Generating work recap for last {days} days...")
+
+    all_items = []
+
+    print("📋 Fetching Linear recap activity...")
+    all_items.extend(fetch_linear_recap_activity(days=days))
+
+    print("📅 Fetching calendar recap activity...")
+    all_items.extend(fetch_calendar_activity(days=days))
+
+    print("💬 Fetching Slack recap activity...")
+    all_items.extend(fetch_slack_recap_activity(days=days))
+
+    all_items = sorted(
+        all_items,
+        key=lambda item: item.get("created_at") or "",
+        reverse=True,
+    )
+
+    print(f"   Total recap items: {len(all_items)}")
+
+    summary = summarize_recap_with_openai(all_items, days=days)
+
+    if not summary:
+        print("   Using fallback recap summary")
+        summary = summarize_recap_fallback(all_items, days=days)
+
+    blocks = build_recap_blocks(summary, days=days, item_count=len(all_items))
+
+    print("📨 Sending work recap...")
+    send_slack_dm(blocks)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Daily brief and work recap bot")
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=["daily", "recap"],
+        default="daily",
+        help="Run daily brief or recap",
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=14,
+        help="Number of days to include for recap",
+    )
+
+    args = parser.parse_args()
+
+    if args.mode == "recap":
+        run_recap(days=args.days)
+    else:
+        run_daily()
