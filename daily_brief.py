@@ -19,7 +19,7 @@ SLACK_USER_TOKEN = os.environ.get("SLACK_USER_TOKEN", "")
 GOOGLE_CALENDAR_CREDENTIALS = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS", "")
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-RECAP_MODEL = os.environ.get("RECAP_MODEL", "gpt-4o-mini")
+RECAP_MODEL = os.environ.get("RECAP_MODEL") or "gpt-4o-mini"
 
 # Channel config from environment (JSON string: {"CHANNEL_ID": "#channel-name", ...})
 SLACK_CHANNELS = json.loads(os.environ.get("SLACK_CHANNELS", "{}"))
@@ -540,7 +540,7 @@ def fetch_linear_recap_activity(days=14):
         return []
 
     query = """
-    query($userId: ID!, $since: DateTime!) {
+    query($userId: ID!, $since: DateTimeOrDuration!) {
         issues(
             filter: {
                 updatedAt: { gte: $since }
